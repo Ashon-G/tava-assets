@@ -1,0 +1,895 @@
+{
+  "name": "Multi-User Reddit Lead Engagement and Generation System",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 10,
+              "triggerAtMinute": 8
+            }
+          ]
+        }
+      },
+      "id": "bac95e18-4ac5-4a92-a0ee-9e0ebb3369a4",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -30400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "firestoreProjectId",
+              "value": "tava-e5c08",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "usersCollection",
+              "value": "user_profiles",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "leadsCollection",
+              "value": "reddit_leads",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "activityLogsCollection",
+              "value": "agent_activity_log",
+              "type": "string"
+            },
+            {
+              "id": "id-5",
+              "name": "engagementScoreThreshold",
+              "value": 8,
+              "type": "number"
+            },
+            {
+              "id": "id-6",
+              "name": "pendingCommentsCollection",
+              "value": "pending_comments",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "293fef4c-9b99-472f-9cd0-baf830101aae",
+      "name": "Workflow Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -30176,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "getAll",
+        "projectId": "={{ $('Workflow Configuration').first().json.firestoreProjectId }}",
+        "collection": "={{ $('Workflow Configuration').first().json.usersCollection }}",
+        "returnAll": true
+      },
+      "id": "9293034b-f410-4e80-9f61-f6bd1c54f527",
+      "name": "Get Active Users from Firestore",
+      "type": "n8n-nodes-base.googleFirebaseCloudFirestore",
+      "typeVersion": 1.1,
+      "position": [
+        -29952,
+        400
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "wNaOSyOdlXG6FLBp",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process users array and create one item per user\nconst users = $input.all();\nconst outputItems = [];\n\nfor (const user of users) {\n  const userData = user.json;\n  \n  outputItems.push({\n    json: {\n      userId: userData.userId || userData.id,\n      redditUsername: userData.redditAccount?.username,\n      productDescription: userData.onboardingData?.productDescription,\n      targetKeywords: userData.targetKeywords\n    }\n  });\n}\n\nreturn outputItems;"
+      },
+      "id": "10cc0884-39de-4d1c-8a90-c17b922f17ce",
+      "name": "Process Users and Create Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -29728,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "projectId": "={{ $('Workflow Configuration').first().json.firestoreProjectId }}",
+        "collection": "={{ $('Workflow Configuration').item.json.usersCollection }}",
+        "documentId": "={{ $json.userId }}"
+      },
+      "id": "d2433c5e-a565-4818-9bcf-19254f0a469d",
+      "name": "Get User Reddit Credentials",
+      "type": "n8n-nodes-base.googleFirebaseCloudFirestore",
+      "typeVersion": 1.1,
+      "position": [
+        -28560,
+        400
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "wNaOSyOdlXG6FLBp",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "location": "allReddit",
+        "keyword": "={{ $('Prepare Search Query').first().json.searchQuery }}",
+        "limit": 50,
+        "additionalFields": {}
+      },
+      "id": "2ab28bdc-2c2d-4dc5-ad57-c947f424b961",
+      "name": "Search Reddit Posts",
+      "type": "n8n-nodes-base.reddit",
+      "typeVersion": 1,
+      "position": [
+        -28336,
+        400
+      ],
+      "credentials": {
+        "redditOAuth2Api": {
+          "id": "pDufJFk3BXO2sJVq",
+          "name": "Reddit account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter posts that haven't been processed yet by checking against Firestore activity logs\n// Return only new posts with relevant fields\n// Filter posts created within the last 30 days\n\nconst posts = $input.all();\nconst newPosts = [];\n\n// Calculate timestamp for 30 days ago (in seconds)\nconst thirtyDaysAgo = Math.floor(Date.now() / 1000) - (30 * 24 * 60 * 60);\n\nfor (const post of posts) {\n  const postData = post.json;\n  \n  // Extract the post ID from the Reddit post data\n  const postId = postData.id || postData.name;\n  \n  // Get the post creation timestamp\n  const postCreatedUtc = postData.created_utc || postData.created || 0;\n  \n  // Skip posts older than 30 days\n  if (postCreatedUtc < thirtyDaysAgo) {\n    continue;\n  }\n  \n  // Check if this post has already been processed\n  // You would need to query Firestore activity logs here\n  // For now, we'll assume all posts are new and filter based on basic criteria\n  \n  // Create a filtered post object with only the required fields\n  const filteredPost = {\n    postId: postId,\n    title: postData.title || '',\n    selftext: postData.selftext || '',\n    author: postData.author || '',\n    subreddit: postData.subreddit || '',\n    created_utc: postCreatedUtc,\n    permalink: postData.permalink || ''\n  };\n  \n  newPosts.push({ json: filteredPost });\n}\n\nreturn newPosts;"
+      },
+      "id": "3453fcfe-22f5-4052-88d1-c07ffa52e6e5",
+      "name": "Filter New Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -28112,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e9ad19da-8275-46ad-a913-136616ef0757",
+      "name": "Check If Posts Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -27888,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Postid: {{ $json.postId }}\n\nSubreddit: {{ $json.subreddit }}\n\nPost Title: {{ $json.title }}\n\nPost Content: {{ $json.selftext }}\n\nAnalyze this Reddit post and determine if it's worth engaging with for a business that helps with AI automation and sales.\n\nYou MUST respond with ONLY a valid JSON object in this EXACT format (no markdown, no code blocks, no extra text):\n\n{\"score\": 7, \"reasoning\": \"your explanation here\", \"shouldEngage\": true, \"engagementStrategy\": \"your strategy here\"}\n\nRules:\n- score must be a number from 0-10\n- reasoning must be a string explaining the score\n- shouldEngage must be true or false\n- engagementStrategy must be a string (or null if shouldEngage is false)\n\nReturn ONLY the JSON. Nothing else.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are an expert lead scoring analyst for Reddit engagement.\n\nYour task is to:\n1. Analyze the Reddit post content and context\n2. Evaluate the buying intent and relevance to the user's product/service\n3. Score the engagement opportunity from 0-10 based on:\n   - Relevance to target keywords and product\n   - User's expressed pain points or needs\n   - Buying intent signals\n   - Conversation quality and engagement potential\n   - Authenticity of the discussion\n4. Provide a brief reasoning for the score\n5. Suggest an engagement strategy if score is high\n\nReturn your analysis in the structured format."
+        }
+      },
+      "id": "023c4b7c-0931-4d0c-a4d1-036287d72b29",
+      "name": "AI Agent - Analyze and Score Post",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        -27664,
+        400
+      ],
+      "retryOnFail": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-001",
+        "options": {}
+      },
+      "id": "4d378514-7b0d-4a97-984d-01743fc23702",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -27664,
+        624
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "JnvFLhfYip4QtSbf",
+          "name": "Firebase Gemini"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n\t\"type\": \"object\",\n\t\"properties\": {\n\t\t\"score\": {\n\t\t\t\"type\": \"number\",\n\t\t\t\"description\": \"Engagement score from 0 to 10\",\n\t\t\t\"minimum\": 0,\n\t\t\t\"maximum\": 10\n\t\t},\n\t\t\"reasoning\": {\n\t\t\t\"type\": \"string\",\n\t\t\t\"description\": \"Explanation for the score\"\n\t\t},\n\t\t\"shouldEngage\": {\n\t\t\t\"type\": \"boolean\",\n\t\t\t\"description\": \"Whether to engage with this post\"\n\t\t},\n\t\t\"engagementStrategy\": {\n\t\t\t\"type\": \"string\",\n\t\t\t\"description\": \"Strategy for engaging with the post\"\n\t\t}\n\t}\n}"
+      },
+      "id": "95a0bd9d-4edc-4101-b1ec-a16bedd92f14",
+      "name": "Structured Output Parser - Scoring",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -27536,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $json.shouldEngage = true }}",
+              "rightValue": "={{ $('Workflow Configuration').first().json.engagementScoreThreshold }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "633b5705-2800-4847-8470-79227c2009ca",
+      "name": "Check Engagement Score",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -27088,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Post Title: {{ $json.title || $('Check If Posts Found').item.json.title }}\n\nPost Content: {{ $json.selftext || $('Check If Posts Found').item.json.selftext }}\n\nEngagement Strategy: {{ $json.engagementStrategy }}\n\nUser Product/Service: {{ $('Get User Knowledge Base').first().json.productDescription }}\n\nTarget Market: {{ $('Get User Knowledge Base').first().json.targetMarket }}\n\nBusiness Context: {{ $('Get User Knowledge Base').first().json.businessName || 'our company' }}\n\n---\n\nTASK: Generate a helpful Reddit comment for this post and try to fit in the users product as helpful advice rather than a sales pitch. Mention the users product as advice.\n\nYour response must be a JSON object with this EXACT structure:\n\n{\n  \"comment\": \"<your full comment text here>\",\n  \"tone\": \"<helpful|informative|empathetic|conversational>\",\n  \"mentionsProduct\": <true or false>,\n  \"confidence\": <number 0-10>\n}\n\nCOMMENT GUIDELINES:\n1. Be genuinely helpful and address the poster's specific needs\n2. Use a natural, conversational tone appropriate for Reddit\n3. Provide value FIRST before any product mention\n4. If mentioning the product, do so naturally and briefly\n5. Keep length to 1 - 2 sentances\n6. Avoid sales language - focus on solving their problem\n7. Use the engagement strategy: {{ $json.engagementStrategy }}\n\nTONE SELECTION:\n- \"helpful\": Offering practical advice or solutions\n- \"informative\": Sharing knowledge or insights\n- \"empathetic\": Acknowledging their frustration/challenges\n- \"conversational\": Casual, friendly discussion\n\nCONFIDENCE SCORING:\n- 8-10: Highly relevant, valuable comment\n- 5-7: Good comment but could be more specific\n- 0-4: Generic or less relevant\n\nReturn ONLY the JSON object. No additional text.",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a helpful, authentic Reddit community member who provides genuine value.\n\nYour task is to:\n1. Write a natural, human-like comment that adds value to the conversation\n2. Be helpful and authentic - never be salesy or promotional\n3. Share relevant insights or experiences related to the topic\n4. Subtly mention the user's product/service ONLY if it naturally fits the conversation\n5. Keep the tone conversational and friendly\n6. Follow the engagement strategy provided\n7. Avoid marketing language, buzzwords, or obvious promotion\n\nReturn ONLY the comment text, ready to post."
+        }
+      },
+      "id": "e15e02d1-7707-4bb5-a524-82674704a697",
+      "name": "AI Agent - Generate Comment",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        -26864,
+        144
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-001",
+        "options": {}
+      },
+      "id": "7f4b3bea-8da0-43cb-af82-04060b462de0",
+      "name": "Google Gemini Chat Model - Comment",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -26864,
+        368
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "JnvFLhfYip4QtSbf",
+          "name": "Firebase Gemini"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "userId",
+              "value": "={{ $json.userId }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "postId",
+              "value": "={{ $json.postId }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "action",
+              "value": "post_analyzed_low_score",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "score",
+              "value": "={{ $json.score }}",
+              "type": "number"
+            },
+            {
+              "id": "id-5",
+              "name": "reasoning",
+              "value": "={{ $json.reasoning }}",
+              "type": "string"
+            },
+            {
+              "id": "id-6",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7d539f95-4d26-46d5-a8df-4aa387e27349",
+      "name": "Prepare Low Score Activity Log",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -26800,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "create",
+        "projectId": "={{ $('Workflow Configuration').first().json.firestoreProjectId }}",
+        "collection": "={{ $('Workflow Configuration').first().json.activityLogsCollection }}",
+        "columns": "userId, postId, postTitle, subreddit, engagementScore, action, timestamp, reason"
+      },
+      "id": "f6c4a137-16c4-47d3-9e61-98c66f3a20b6",
+      "name": "Log Low Score Activity to Firestore",
+      "type": "n8n-nodes-base.googleFirebaseCloudFirestore",
+      "typeVersion": 1.1,
+      "position": [
+        -26512,
+        544
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "wNaOSyOdlXG6FLBp",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "getAll",
+        "projectId": "={{ $('Workflow Configuration').first().json.firestoreProjectId }}",
+        "collection": "knowledge_base",
+        "returnAll": true
+      },
+      "id": "e7c922f4-4522-4488-b947-4d31629b05fe",
+      "name": "Get User Knowledge Base",
+      "type": "n8n-nodes-base.googleFirebaseCloudFirestore",
+      "typeVersion": 1.1,
+      "position": [
+        -29504,
+        400
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "wNaOSyOdlXG6FLBp",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Knowledge Base Content:\n{{ $json.content }}\n\nKnowledge Base Title: {{ $json.title }}\n\nUser Product: {{ $('Process Users and Create Items').item.json.productDescription }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a keyword generation expert for Reddit search optimization.\n\nYour task is to:\n1. Analyze the user's knowledge base content\n2. Identify key topics, pain points, and solutions the user can address\n3. Generate 3-5 highly relevant Reddit search keywords that will find posts where the user can provide value\n4. Focus on problem-oriented keywords (e.g., \"struggling with\", \"need help\", \"looking for\")\n5. Ensure keywords align with the user's product/service capabilities\n\nReturn the keywords in the structured format."
+        }
+      },
+      "id": "5c436194-5fa3-429e-8526-1a31d38c8c90",
+      "name": "AI Agent - Generate Search Keywords",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        -29248,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-001",
+        "options": {}
+      },
+      "id": "b0924a3b-579f-4045-b05d-6272c734c4d4",
+      "name": "Google Gemini Chat Model - Keywords",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -29280,
+        624
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "JnvFLhfYip4QtSbf",
+          "name": "Firebase Gemini"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n\t\"type\": \"object\",\n\t\"properties\": {\n\t\t\"keywords\": {\n\t\t\t\"type\": \"array\",\n\t\t\t\"items\": {\n\t\t\t\t\"type\": \"string\"\n\t\t\t},\n\t\t\t\"description\": \"Array of search keywords\"\n\t\t},\n\t\t\"primaryKeyword\": {\n\t\t\t\"type\": \"string\",\n\t\t\t\"description\": \"The primary keyword for searching\"\n\t\t},\n\t\t\"reasoning\": {\n\t\t\t\"type\": \"string\",\n\t\t\t\"description\": \"Explanation for the keyword selection\"\n\t\t}\n\t}\n}",
+        "autoFix": true
+      },
+      "id": "7ce036e6-fea5-4121-8ee9-ae1cba18c387",
+      "name": "Structured Output Parser - Keywords",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -29152,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "searchQuery",
+              "value": "={{ $json.output.primaryKeyword }}",
+              "type": "string"
+            },
+            {
+              "id": "id-2",
+              "name": "allKeywords",
+              "value": "={{ $json.output.keywords.join(', ') }}",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "userId",
+              "value": "={{ $('Process Users and Create Items').item.json.userId }}",
+              "type": "string"
+            },
+            {
+              "id": "id-4",
+              "name": "productDescription",
+              "value": "={{ $('Process Users and Create Items').item.json.productDescription }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "bae08644-70ca-4465-bac8-d1d3c3286cf5",
+      "name": "Prepare Search Query",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -28784,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "811c5131-be9d-4576-9328-d8eeafbe5ed5",
+      "name": "Google Gemini Chat Model - AutoFix",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -29072,
+        832
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "JnvFLhfYip4QtSbf",
+          "name": "Firebase Gemini"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "create",
+        "projectId": "={{ $('Workflow Configuration').first().json.firestoreProjectId }}",
+        "collection": "={{ $('Workflow Configuration').first().json.pendingCommentsCollection }}",
+        "columns": "userId, postId, workspaceId, commentText, postTitle, postUrl, subreddit, engagementScore, engagementStrategy, status, createdAt"
+      },
+      "id": "c20eeb95-03d8-4e83-ac6c-fe05206b241a",
+      "name": "Save Pending Comment to Firestore",
+      "type": "n8n-nodes-base.googleFirebaseCloudFirestore",
+      "typeVersion": 1.1,
+      "position": [
+        -26288,
+        256
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "wNaOSyOdlXG6FLBp",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Robust parser that handles any format from AI Agent\nconst items = $input.all();\nconst outputItems = [];\n\nfor (const item of items) {\n  let output = item.json.output || item.json;\n  \n  // Initialize with safe defaults\n  let score = 0;\n  let reasoning = '';\n  let shouldEngage = false;\n  let engagementStrategy = null;\n  \n  try {\n    // Case 1: Output is already a properly structured object\n    if (typeof output === 'object' && output !== null && !Array.isArray(output)) {\n      score = parseFloat(output.score) || 0;\n      reasoning = output.reasoning || '';\n      shouldEngage = output.shouldEngage === true;\n      engagementStrategy = output.engagementStrategy || null;\n    }\n    // Case 2: Output is a JSON string that needs parsing\n    else if (typeof output === 'string') {\n      // Try to parse as JSON\n      const parsed = JSON.parse(output);\n      score = parseFloat(parsed.score) || 0;\n      reasoning = parsed.reasoning || '';\n      shouldEngage = parsed.shouldEngage === true;\n      engagementStrategy = parsed.engagementStrategy || null;\n    }\n    \n    // Validate and constrain score to 0-10 range\n    score = Math.max(0, Math.min(10, score));\n    \n    // If no reasoning provided, create a default one\n    if (!reasoning || reasoning.trim() === '') {\n      reasoning = `Post scored ${score}/10 for engagement potential`;\n    }\n    \n  } catch (parseError) {\n    // If all parsing fails, try to extract data with regex from string\n    console.log('Parsing failed, attempting regex extraction:', parseError.message);\n    \n    const outputText = String(output);\n    \n    // Try to find score\n    const scoreMatches = [\n      /[\"']?score[\"']?\\s*:\\s*(\\d+(?:\\.\\d+)?)/i,\n      /score\\s+(?:of\\s+)?(\\d+)/i,\n      /(\\d+)\\s*\\/\\s*10/\n    ];\n    \n    for (const regex of scoreMatches) {\n      const match = outputText.match(regex);\n      if (match) {\n        score = parseFloat(match[1]);\n        break;\n      }\n    }\n    \n    // Try to find shouldEngage\n    const shouldEngageMatch = outputText.match(/[\"']?shouldEngage[\"']?\\s*:\\s*(true|false)/i);\n    if (shouldEngageMatch) {\n      shouldEngage = shouldEngageMatch[1].toLowerCase() === 'true';\n    } else {\n      // If score is 7 or higher, assume should engage\n      shouldEngage = score >= 7;\n    }\n    \n    // Use the full text as reasoning if we can't extract it\n    reasoning = outputText.substring(0, 500);\n    \n    // Default strategy\n    engagementStrategy = shouldEngage \n      ? \"Provide helpful insights related to the discussion\" \n      : null;\n  }\n  \n  // Always return a valid, structured object\n  outputItems.push({\n    json: {\n      ...item.json,\n      score: score,\n      reasoning: reasoning,\n      shouldEngage: shouldEngage,\n      engagementStrategy: engagementStrategy,\n      _parsingSuccess: !!(output && typeof output === 'object'),\n      _originalOutput: output\n    }\n  });\n}\n\nreturn outputItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -27312,
+        400
+      ],
+      "id": "ffd56e41-9aac-47de-9c11-38f160eb123a",
+      "name": "Parse and Validate Score Output"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"comment\": {\n      \"type\": \"string\",\n      \"description\": \"The complete Reddit comment text\"\n    },\n    \"tone\": {\n      \"type\": \"string\",\n      \"enum\": [\"helpful\", \"informative\", \"empathetic\", \"conversational\"],\n      \"description\": \"The tone used in the comment\"\n    },\n    \"mentionsProduct\": {\n      \"type\": \"boolean\",\n      \"description\": \"Whether the comment mentions the user's product/service\"\n    },\n    \"confidence\": {\n      \"type\": \"number\",\n      \"minimum\": 0,\n      \"maximum\": 10,\n      \"description\": \"Confidence score for comment quality (0-10)\"\n    }\n  },\n  \"required\": [\"comment\", \"tone\", \"mentionsProduct\", \"confidence\"]\n}"
+      },
+      "id": "0e8fc5c1-258e-421b-a513-db050d0538cb",
+      "name": "Structured Output Parser- for Comment Generation",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -26736,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Robust Comment Parser with Multiple Fallback Strategies\n// Place this in a Code node after your AI Agent generates the comment\n\n// Process ALL items, not just the first one\nconst allItems = $input.all();\nconst results = [];\n\n/**\n * Strategy 1: Try to parse structured JSON output\n */\nfunction parseStructuredOutput(data) {\n  try {\n    // Check if output is already an object\n    if (typeof data.output === 'object' && data.output !== null) {\n      if (data.output.comment) {\n        return {\n          comment: data.output.comment,\n          score: data.output.score || null,\n          strategy: data.output.strategy || null,\n          tone: data.output.tone || null,\n          mentionsProduct: data.output.mentionsProduct || false,\n          confidence: data.output.confidence || null,\n          source: 'structured_object'\n        };\n      }\n    }\n    \n    // Try parsing if it's a string\n    if (typeof data.output === 'string') {\n      const parsed = JSON.parse(data.output);\n      if (parsed.comment) {\n        return {\n          comment: parsed.comment,\n          score: parsed.score || null,\n          strategy: parsed.strategy || null,\n          tone: parsed.tone || null,\n          mentionsProduct: parsed.mentionsProduct || false,\n          confidence: parsed.confidence || null,\n          source: 'structured_string'\n        };\n      }\n    }\n    \n    return null;\n  } catch (e) {\n    return null;\n  }\n}\n\n/**\n * Strategy 2: Extract JSON from markdown code blocks\n */\nfunction extractFromMarkdown(data) {\n  try {\n    const text = typeof data.output === 'string' ? data.output : JSON.stringify(data.output);\n    \n    // Match ```json ... ``` or ``` ... ```\n    const jsonBlockRegex = /```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```/;\n    const match = text.match(jsonBlockRegex);\n    \n    if (match) {\n      const parsed = JSON.parse(match[1]);\n      if (parsed.comment) {\n        return {\n          comment: parsed.comment,\n          score: parsed.score || null,\n          strategy: parsed.strategy || null,\n          tone: parsed.tone || null,\n          mentionsProduct: parsed.mentionsProduct || false,\n          confidence: parsed.confidence || null,\n          source: 'markdown_block'\n        };\n      }\n    }\n    \n    return null;\n  } catch (e) {\n    return null;\n  }\n}\n\n/**\n * Strategy 3: Extract JSON object from text\n */\nfunction extractJsonFromText(data) {\n  try {\n    const text = typeof data.output === 'string' ? data.output : JSON.stringify(data.output);\n    \n    // Find first { and last } to extract JSON\n    const firstBrace = text.indexOf('{');\n    const lastBrace = text.lastIndexOf('}');\n    \n    if (firstBrace !== -1 && lastBrace !== -1) {\n      const jsonStr = text.substring(firstBrace, lastBrace + 1);\n      const parsed = JSON.parse(jsonStr);\n      \n      if (parsed.comment) {\n        return {\n          comment: parsed.comment,\n          score: parsed.score || null,\n          strategy: parsed.strategy || null,\n          tone: parsed.tone || null,\n          mentionsProduct: parsed.mentionsProduct || false,\n          confidence: parsed.confidence || null,\n          source: 'extracted_json'\n        };\n      }\n    }\n    \n    return null;\n  } catch (e) {\n    return null;\n  }\n}\n\n/**\n * Strategy 4: Use entire output as comment (last resort)\n */\nfunction useRawOutput(data) {\n  try {\n    let text = '';\n    \n    if (typeof data.output === 'string') {\n      text = data.output;\n    } else if (typeof data.output === 'object') {\n      // Try to find any text-like field\n      text = data.output.comment || \n             data.output.text || \n             data.output.content ||\n             JSON.stringify(data.output);\n    }\n    \n    // Clean up common artifacts\n    text = text\n      .replace(/```json/g, '')\n      .replace(/```/g, '')\n      .trim();\n    \n    // If it looks like it still has JSON structure, try to extract the comment value\n    if (text.includes('\"comment\"')) {\n      const commentMatch = text.match(/\"comment\"\\s*:\\s*\"([^\"]+)\"/);\n      if (commentMatch) {\n        text = commentMatch[1];\n      }\n    }\n    \n    // Only use if we have substantial text (more than 10 chars)\n    if (text.length > 10) {\n      return {\n        comment: text,\n        score: null,\n        strategy: null,\n        tone: null,\n        mentionsProduct: false,\n        confidence: null,\n        source: 'raw_fallback'\n      };\n    }\n    \n    return null;\n  } catch (e) {\n    return null;\n  }\n}\n\n/**\n * Strategy 5: Emergency generic comment\n */\nfunction getEmergencyComment(postData) {\n  return {\n    comment: \"Thanks for sharing this! This is an interesting perspective that adds value to the discussion.\",\n    score: 0,\n    strategy: \"emergency_fallback\",\n    tone: \"neutral\",\n    mentionsProduct: false,\n    confidence: 0,\n    source: 'emergency',\n    warning: 'Used emergency fallback comment due to parsing failure'\n  };\n}\n\n// Loop through each item\nfor (const item of allItems) {\n  const aiOutput = item.json;\n  \n  // Main execution with fallback chain\n  let result = null;\n\n  // Try each strategy in order\n  result = parseStructuredOutput(aiOutput);\n  if (!result) result = extractFromMarkdown(aiOutput);\n  if (!result) result = extractJsonFromText(aiOutput);\n  if (!result) result = useRawOutput(aiOutput);\n  if (!result) result = getEmergencyComment(aiOutput);\n\n  // Additional validation and cleaning\n  if (result.comment) {\n    // Unescape common JSON escape sequences\n    result.comment = result.comment\n      .replace(/\\\\n/g, '\\n')\n      .replace(/\\\\\"/g, '\"')\n      .replace(/\\\\'/g, \"'\")\n      .replace(/\\\\\\\\/g, '\\\\')\n      .trim();\n    \n    // Ensure comment isn't too short or obviously broken\n    if (result.comment.length < 10 || result.comment === '{}' || result.comment === 'null') {\n      result = getEmergencyComment(aiOutput);\n    }\n  }\n\n  // Add metadata for debugging\n  result.parsed_at = new Date().toISOString();\n  result.original_output_type = typeof aiOutput.output;\n\n  // Get data from earlier nodes if available\n  let workspaceId = null;\n  let postTitle = null;\n  let originalPostId = null;\n  let postPermalink = null;\n  let postAuthor = null;\n  let postSubreddit = null;\n\n  try {\n    // Try to get workspace from credentials node\n    const credentials = $('Get User Reddit Credentials').first().json;\n    workspaceId = credentials?.onboardingData?.workspaceName || null;\n  } catch (e) {\n    // Ignore if node doesn't exist\n  }\n\n  // Get original post data from the current item\n  postTitle = aiOutput.title || null;\n  originalPostId = aiOutput.postId || aiOutput.id || null;\n  postPermalink = aiOutput.permalink || null;\n  postAuthor = aiOutput.author || null;\n  postSubreddit = aiOutput.subreddit || null;\n\n  // Pass through all necessary fields\n  const combinedData = {\n    ...result, // Our parsed comment data\n    // From the original post data (Check If Posts Found / Filter New Posts)\n    postId: originalPostId,\n    subredditId: aiOutput.subreddit_id || null,\n    subreddit: postSubreddit,\n    postUrl: postPermalink ? `https://reddit.com${postPermalink}` : null,\n    userId: postAuthor,\n    // From earlier nodes\n    workspaceId: workspaceId,\n    postTitle: postTitle,\n    leadId: postAuthor\n  };\n\n  // Remove null and undefined fields to keep output clean\n  const cleanedData = {};\n  for (const [key, value] of Object.entries(combinedData)) {\n    if (value !== null && value !== undefined) {\n      cleanedData[key] = value;\n    }\n  }\n\n  // Add this processed item to results\n  results.push({ json: cleanedData });\n}\n\n// Return ALL processed items\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -26512,
+        256
+      ],
+      "id": "a0373f1d-3492-4e30-9212-01016b705d19",
+      "name": "Parse Comment with Fallbacks"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Workflow Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Configuration": {
+      "main": [
+        [
+          {
+            "node": "Get Active Users from Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Users from Firestore": {
+      "main": [
+        [
+          {
+            "node": "Process Users and Create Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User Reddit Credentials": {
+      "main": [
+        [
+          {
+            "node": "Search Reddit Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Reddit Posts": {
+      "main": [
+        [
+          {
+            "node": "Filter New Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Posts": {
+      "main": [
+        [
+          {
+            "node": "Check If Posts Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Posts Found": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Analyze and Score Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Analyze and Score Post",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser - Scoring": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent - Analyze and Score Post",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Analyze and Score Post": {
+      "main": [
+        [
+          {
+            "node": "Parse and Validate Score Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Engagement Score": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Generate Comment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Low Score Activity Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model - Comment": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Generate Comment",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Low Score Activity Log": {
+      "main": [
+        [
+          {
+            "node": "Log Low Score Activity to Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Users and Create Items": {
+      "main": [
+        [
+          {
+            "node": "Get User Knowledge Base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User Knowledge Base": {
+      "main": [
+        [
+          {
+            "node": "AI Agent - Generate Search Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model - Keywords": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent - Generate Search Keywords",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser - Keywords": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent - Generate Search Keywords",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Generate Search Keywords": {
+      "main": [
+        [
+          {
+            "node": "Prepare Search Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Search Query": {
+      "main": [
+        [
+          {
+            "node": "Get User Reddit Credentials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model - AutoFix": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Structured Output Parser - Keywords",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent - Generate Comment": {
+      "main": [
+        [
+          {
+            "node": "Parse Comment with Fallbacks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse and Validate Score Output": {
+      "main": [
+        [
+          {
+            "node": "Check Engagement Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser- for Comment Generation": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent - Generate Comment",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Comment with Fallbacks": {
+      "main": [
+        [
+          {
+            "node": "Save Pending Comment to Firestore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1fc7c2ae-a3f3-4ef4-a45c-a9cbb44d63c7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2a407808c25d0282382372f89128b140ce2bee5f72d0408acebd3858d5edaeb9"
+  },
+  "id": "rITV2BSYI1hBCiMj",
+  "tags": []
+}
